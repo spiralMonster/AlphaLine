@@ -1,0 +1,13 @@
+trading_strategy={
+"strategy":"quantile_based",
+"values":{
+ "quantile_long":,
+ "qunatile_short:"
+}
+}
+
+
+trading_strategy={
+"strategy":"returns_based",
+"values":{}
+}
