@@ -15,6 +15,7 @@ from zipline.api import (attach_pipeline,
                          order_target_percent,
                          time_rules,
                          date_rules,
+                         get_datetime,
                          schedule_function,
                          record)
 
@@ -94,6 +95,7 @@ class BackTester:
         self.trading_strategy=trading_strategy
 
         self.bundle=bundles.load("quandl")
+        self.info_flag=True
 
         
 
@@ -118,7 +120,7 @@ class BackTester:
                    )
 
         self.assets=assets
-        print(f"INFO: Model predictions loaded...")
+        print(f"[INFO]: Model predictions loaded...")
 
 
     def fill_missing_dates_values(self):
@@ -145,37 +147,49 @@ class BackTester:
         prediction=prediction.sort_index().ffill()
         self.prediction=prediction
 
-        print(f"INFO: Missing Date Values added in Model Predictions...")
+        print(f"[INFO]: Missing Date Values added in Model Predictions...")
 
 
-    def compute_signals(self):
-        if self.trading_strategy["strategy"]=="returns_based":
-            model_signals=Model_Factor()
+    def compute_signals1(self):
+        model_signals=Model_Factor()
 
-            pipeline=Pipeline(
+        pipeline=Pipeline(
+            columns={
+                "longs":model_signals.top(self.n_longs,mask=model_signals>0),
+                "shorts":model_signals.bottom(self.n_shorts,mask=model_signals<0)
+            },
+            screen=StaticAssets(self.assets)
+        )
+
+        return pipeline
+
+        
+
+    def compute_signals2(self):
+        model_signals=Model_Factor()
+        quantile_signals=Quantile_Factor()
+
+        quantile_long=self.trading_strategy["values"]["quantile_long"]
+        quantile_short=self.trading_strategy["values"]["quantile_short"]
+
+        long_mask=(quantile_signals.eq(quantile_long)) & (model_signals>0)
+        short_mask=(quantile_signals.eq(quantile_short)) & (model_signals<0)
+
+        longs=model_signals.top(self.n_longs,mask=long_mask)
+        shorts=model_signals.bottom(self.n_shorts,mask=short_mask)
+        
+        pipeline=Pipeline(
                 columns={
-                    "longs":model_signals.top(self.n_longs,mask=model_signals>0),
-                    "shorts":model_signals.bottom(self.n_shorts,mask=model_signals<0)
-                },
-                screen=StaticAssets(self.assets)
-            )
-
-        else:
-            model_signals=Model_Factor()
-            quantile_signals=Quantile_Factor()
-
-            quantile_long=self.trading_strategy["values"]["quantile_long"]
-            quantile_short=self.trading_strategy["values"]["quantile_short"]
-
-            pipeline=Pipeline(
-                columns={
-                    "longs":quantile_signals.top(self.n_longs,mask=quantile_signals.eq(quantile_long)),
-                    "shorts":quantile_signals.top(self.n_shorts,mask=quantile_signals.eq(quantile_short))
+                    "longs":longs,
+                    "shorts":shorts
                 },
                 screen=StaticAssets(self.assets)
             )
 
         return pipeline
+
+    
+        
 
     def initialize(self,context):
         context.n_longs=self.n_longs
@@ -201,12 +215,26 @@ class BackTester:
             time_rules.market_close()
         )
 
-        pipeline=self.compute_signals()
-        attach_pipeline(pipeline,"signals")
+        pipeline1=self.compute_signals1()
+        attach_pipeline(pipeline1,"signals1")
+
+        if self.trading_strategy["strategy"]=="quantile_based":
+            pipeline2=self.compute_signals2()
+            attach_pipeline(pipeline2,"signals2")
+            
         
 
     def before_trading_start(self,context,data):
-        output=pipeline_output("signals")
+        if self.trading_strategy["strategy"]=="returns_based":
+            output=pipeline_output("signals1")
+
+        else:
+            output=pipeline_output("signals2")
+
+            if (len(output[output["longs"]==True])<self.min_positions) and (len(output[output["shorts"]==True])<self.min_positions):
+                output=pipeline_output("signals1")
+                    
+                
 
         final_output=pd.concat([output["longs"].astype(int),
                                 output["shorts"].astype(int).mul(-1)],axis=0)
@@ -234,10 +262,11 @@ class BackTester:
         context.longs=len(trades[1])
         context.shorts=len(trades[-1])
 
-        if context.longs>self.min_positions and context.shorts>self.min_positions:
+        if context.longs>self.min_positions:
             for stock in trades[1]:
                 order_target_percent(stock,1/context.longs)
 
+        if context.shorts>self.min_positions:
             for stock in trades[-1]:
                 order_target_percent(stock,-1/context.shorts)
 
@@ -258,7 +287,7 @@ class BackTester:
             Model_Data.prediction:DataFrameLoader(Model_Data.prediction,self.prediction)
         }
 
-        print(f"INFO: Model Data Loader created...")
+        print(f"[INFO]: Model Data Loader created...")
         
         if self.trading_strategy["strategy"]=="returns_based":
             strategy="trading strategy-I"
@@ -266,7 +295,7 @@ class BackTester:
         else:
              strategy="trading strategy-II"
             
-        print(f"INFO: Backtesting started for {strategy}...")
+        print(f"[INFO]: Backtesting started for {strategy}...")
 
         start_date=self.prediction.index.get_level_values("date").min()
         end_date=self.prediction.index.get_level_values("date").max()
@@ -282,7 +311,7 @@ class BackTester:
             custom_loader=self.model_data_loader 
         )
 
-        print(f"INFO: Backtesting completed...")
+        print(f"[INFO]: Backtesting completed...")
 
         return results
 

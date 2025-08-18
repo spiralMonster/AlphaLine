@@ -21,6 +21,8 @@ class MultipleTimeSeriesCV:
         days=sorted(unique_dates,reverse=True)
 
         split_idx=[]
+        do_break=False
+        
         for ind in range(self.n_splits):
             test_end_idx=ind*self.test_period
             test_start_idx=test_end_idx+self.test_period
@@ -29,7 +31,8 @@ class MultipleTimeSeriesCV:
             train_start_idx=train_end_idx+self.training_period+self.lookahead-1
 
             if train_start_idx>=len(days):
-                break
+                train_start_idx=len(days)-1
+                do_break=True
 
             split_idx.append(
                 [
@@ -39,6 +42,9 @@ class MultipleTimeSeriesCV:
                     test_end_idx
                 ]
             )
+
+            if do_break:
+                break
 
 
         dates=X.reset_index()[["date"]]
